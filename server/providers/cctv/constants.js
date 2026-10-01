@@ -236,6 +236,22 @@ export const CALGARY_DOWNTOWN = { lat: 51.0461, lon: -114.0626 };
  * body cannot be buffered without limit. */
 export const CALGARY_MAX_CATALOG_BYTES = 4 * 1024 * 1024;
 
+/** City of Toronto traffic cameras (RESCU + arterial): one keyless GeoJSON on
+ * the Toronto Open Data CKAN portal; frames are stills on opendata.toronto.ca. */
+export const DEFAULT_TORONTO_CAMERAS_URL =
+  'https://ckan0.cf.opendata.inter.prod-toronto.ca/dataset/a3309088-5fd4-4d34-8297-77c8301840ac/resource/4a568300-c7f8-496d-b150-dff6f5dc6d4f/download/traffic-camera-list-4326.geojson';
+/** The only origin Toronto camera frames may come from. */
+export const TORONTO_IMAGE_ORIGIN =
+  'https://opendata.toronto.ca/transportation/tmc/rescucameraimages/CameraImages/';
+export const DEFAULT_TORONTO_MAX_SOURCES = 400;
+/** King & Bay: the prioritization anchor. */
+export const TORONTO_DOWNTOWN = { lat: 43.6487, lon: -79.3817 };
+/** The whole city is ~340 features and well under 1 MB. */
+export const TORONTO_MAX_CATALOG_BYTES = 4 * 1024 * 1024;
+/** A city camera this close to an Ontario 511 camera is the same physical
+ * feed (511 republishes ~74 City of Toronto cameras); the 511 copy wins. */
+export const TORONTO_ONTARIO_DEDUPE_M = 60;
+
 /** DelDOT CCTV: one keyless statewide JSON catalog; live video via RTMP-over-HTTP (rtmpt:80). */
 export const DELDOT_CCTV_URL = 'https://tmc.deldot.gov/json/videocamera.json';
 export const DEFAULT_DELDOT_MAX_SOURCES = 300;

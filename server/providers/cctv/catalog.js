@@ -18,7 +18,31 @@ import {
   loadNswSourcesFromOpenData,
   loadCalgarySourcesFromOpenData,
   loadDelDOTSourcesFromOpenData,
+  loadTorontoSourcesFromOpenData,
 } from './sources.js';
+import { TORONTO_ONTARIO_DEDUPE_M } from './constants.js';
+
+/** Equirectangular distance in metres; plenty for a sub-100 m same-city check. */
+function approxDistanceM(a, b) {
+  const dx = (b.lon - a.lon) * Math.cos((a.lat * Math.PI) / 180) * 111320;
+  const dy = (b.lat - a.lat) * 110540;
+  return Math.hypot(dx, dy);
+}
+
+/**
+ * Drop City of Toronto cameras that Ontario 511 already republishes, so one
+ * physical camera doesn't render twice. The 511 copy wins.
+ */
+function dedupeTorontoAgainstOntario(torontoItems, ontarioItems) {
+  if (!torontoItems.length || !ontarioItems.length) return torontoItems;
+  const nearby = ontarioItems.filter(
+    (item) => item.lat > 43.5 && item.lat < 43.95 && item.lon > -79.75 && item.lon < -79.0,
+  );
+  return torontoItems.filter(
+    (item) =>
+      !nearby.some((other) => approxDistanceM(item, other) < TORONTO_ONTARIO_DEDUPE_M),
+  );
+}
 
 /** Env kill switch: unset or anything but "0" means enabled. */
 const envEnabled = (name) => String(process.env[name] || '1').trim() !== '0';
@@ -91,6 +115,11 @@ const LIVE_PACKS = [
     name: 'deldot',
     enabled: () => envEnabled('CCTV_DELDOT_ENABLED'),
     load: loadDelDOTSourcesFromOpenData,
+  },
+  {
+    name: 'toronto',
+    enabled: () => envEnabled('CCTV_TORONTO_ENABLED'),
+    load: loadTorontoSourcesFromOpenData,
   },
 ];
 /**
@@ -203,6 +232,24 @@ export function createCctvCatalog({ sourceRoot = process.cwd() } = {}) {
           ),
         )
       : [];
+    const packValue = (name) => {
+      const result = liveResults[LIVE_PACKS.findIndex((pack) => pack.name === name)];
+      return result?.status === 'fulfilled' ? result.value : [];
+    };
+    const torontoIndex = LIVE_PACKS.findIndex((pack) => pack.name === 'toronto');
+    if (liveResults[torontoIndex]?.status === 'fulfilled') {
+      const before = liveResults[torontoIndex].value.length;
+      const kept = dedupeTorontoAgainstOntario(
+        liveResults[torontoIndex].value,
+        packValue('ontario'),
+      );
+      liveResults[torontoIndex] = { status: 'fulfilled', value: kept };
+      if (kept.length < before) {
+        console.log(
+          `[CCTV] Toronto: skipped ${before - kept.length} cameras already served by Ontario 511`,
+        );
+      }
+    }
     // Live packs first so file/env overrides win on duplicate IDs; each pack
     // keeps its own priority order and the catalog cap is shared fairly.
     const normalizePack = (name, items) => ({

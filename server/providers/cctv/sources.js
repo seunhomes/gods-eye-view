@@ -55,6 +55,11 @@ import {
   DEFAULT_CALGARY_MAX_SOURCES,
   CALGARY_DOWNTOWN,
   CALGARY_MAX_CATALOG_BYTES,
+  DEFAULT_TORONTO_CAMERAS_URL,
+  TORONTO_IMAGE_ORIGIN,
+  DEFAULT_TORONTO_MAX_SOURCES,
+  TORONTO_DOWNTOWN,
+  TORONTO_MAX_CATALOG_BYTES,
   CCTV_SOURCE_FETCH_TIMEOUT_MS,
   DELDOT_CCTV_URL,
   DEFAULT_DELDOT_MAX_SOURCES,
@@ -76,6 +81,7 @@ import {
   isLikelyTexasCoordinate,
   isLikelyNswCoordinate,
   isLikelyCalgaryCoordinate,
+  isLikelyTorontoCoordinate,
   cameraDisplayCode,
   rowArrayToObject,
   prioritizeSources,
@@ -1702,6 +1708,125 @@ export async function loadDelDOTSourcesFromOpenData() {
       '[CCTV] DelDOT source download error:',
       error?.message || error,
     );
+    return [];
+  }
+}
+
+/** "KING ST W" -> "King St W"; keeps short direction/road tokens upper-case. */
+function torontoTitleCase(text) {
+  return String(text ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\b([a-z])([a-z']*)/g, (_, first, rest) => {
+      const word = first + rest;
+      if (/^(n|s|e|w|ne|nw|se|sw|qew|dvp|xy)$/.test(word)) return word.toUpperCase();
+      return first.toUpperCase() + rest;
+    })
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * One Toronto Open Data GeoJSON feature -> one catalog source, or null.
+ *
+ * DIRECTION1..4 describe the four reference images (REFURL1..4) a camera can
+ * be panned to, not the live view's bearing, so headings use the shared
+ * id-hash fallback at low confidence like Calgary.
+ *
+ * @param {object} feature - GeoJSON feature from the city camera list.
+ * @returns {?object}
+ */
+export function torontoCameraToSource(feature) {
+  const props = feature?.properties;
+  if (!props || typeof props !== 'object') return null;
+  const geometry = feature?.geometry;
+  const point =
+    geometry?.type === 'MultiPoint' ? geometry.coordinates?.[0] : geometry?.coordinates;
+  if (!Array.isArray(point) || point.length < 2) return null;
+  const lon = toFiniteNumber(point[0]);
+  const lat = toFiniteNumber(point[1]);
+  if (!isLikelyTorontoCoordinate(lat, lon)) return null;
+
+  const rawUrl = String(props.IMAGEURL ?? '').trim().replace(/^http:/i, 'https:');
+  if (!rawUrl.startsWith(TORONTO_IMAGE_ORIGIN)) return null;
+  const recId = String(props.REC_ID ?? '').trim();
+  if (!/^\d+$/.test(recId)) return null;
+  const cameraId = `toronto-${recId}`;
+
+  const main = torontoTitleCase(props.MAINROAD);
+  const cross = torontoTitleCase(props.CROSSROAD);
+  const name =
+    [main, cross].filter(Boolean).join(' / ') || `Toronto Camera ${recId}`;
+
+  return {
+    id: cameraId,
+    name,
+    city: 'Toronto',
+    cityId: 'toronto',
+    provider: 'City of Toronto',
+    lat,
+    lon,
+    headingDeg: fallbackHeadingFromId(cameraId),
+    headingConfidence: 'low',
+    pitchDeg: -18,
+    fovDeg: 44,
+    rangeM: 145,
+    mountHeightM: 9,
+    groundElevationM: 110,
+    feedType: 'image',
+    url: rawUrl,
+    snapshotUrl: rawUrl,
+    sourceKind: 'toronto-open-data',
+    license: 'Contains information licensed under the Open Government Licence – Toronto',
+    code: cameraDisplayCode(name.toUpperCase()),
+  };
+}
+
+/**
+ * Fetch City of Toronto traffic cameras from Toronto Open Data (CKAN dataset
+ * `traffic-cameras`), keyless. Frames are stills on opendata.toronto.ca.
+ *
+ * @returns {Promise<Array<object>>} Normalized camera source objects.
+ */
+export async function loadTorontoSourcesFromOpenData() {
+  try {
+    const endpoint =
+      process.env.CCTV_TORONTO_CAMERAS_URL || DEFAULT_TORONTO_CAMERAS_URL;
+    const resp = await fetch(endpoint, {
+      headers: { Accept: 'application/geo+json, application/json' },
+      signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      console.warn('[CCTV] Toronto camera download failed:', resp.status);
+      try {
+        await resp.body?.cancel();
+      } catch {
+        /* no-op */
+      }
+      return [];
+    }
+    const payload = await readResponseJsonCapped(resp, TORONTO_MAX_CATALOG_BYTES);
+    const features = Array.isArray(payload?.features) ? payload.features : [];
+    const cameras = [];
+    const seen = new Set();
+    for (const feature of features) {
+      const camera = torontoCameraToSource(feature);
+      if (!camera || seen.has(camera.id)) continue;
+      seen.add(camera.id);
+      cameras.push(camera);
+    }
+    const maxRaw = Number(
+      process.env.CCTV_TORONTO_MAX_SOURCES || DEFAULT_TORONTO_MAX_SOURCES,
+    );
+    const maxCount = Number.isFinite(maxRaw)
+      ? Math.max(8, Math.min(600, Math.floor(maxRaw)))
+      : DEFAULT_TORONTO_MAX_SOURCES;
+    const prioritized = prioritizeSources(cameras, maxCount, [TORONTO_DOWNTOWN]);
+    console.log(
+      `[CCTV] Loaded Toronto camera sources: ${cameras.length} (using nearest ${prioritized.length})`,
+    );
+    return prioritized;
+  } catch (error) {
+    console.warn('[CCTV] Toronto camera download error:', error?.message || error);
     return [];
   }
 }
