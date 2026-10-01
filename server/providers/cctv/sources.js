@@ -466,7 +466,11 @@ function pickOntarioCctvView(views) {
  */
 export async function loadOntarioSourcesFromOpenData() {
   try {
-    const resp = await fetch(ONTARIO_511_CAMERAS_URL, {
+    // 511on.ca now requires a developer key for the catalog (frames stay keyless).
+    const catalogUrl = process.env.ONTARIO_511_API_KEY
+      ? `${ONTARIO_511_CAMERAS_URL}&key=${encodeURIComponent(process.env.ONTARIO_511_API_KEY)}`
+      : ONTARIO_511_CAMERAS_URL;
+    const resp = await fetch(catalogUrl, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
     });
